@@ -1,0 +1,5 @@
+{
+  "include": ["zero-shot-bom-pattern-detection"],
+  "extraPaths": ["zero-shot-bom-pattern-detection/src"],
+  "typeCheckingMode": "basic"
+}
