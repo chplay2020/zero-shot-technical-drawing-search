@@ -1,0 +1,38 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Pytest cache
+.pytest_cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Environment files
+.env
+.env.*
+
+# Temporary files
+*.tmp
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Generated outputs (keep folder)
+/zero-shot-bom-pattern-detection/examples/outputs/*
+!/zero-shot-bom-pattern-detection/examples/outputs/.gitkeep
+
+# Model weights and checkpoints
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.safetensors
