@@ -1,0 +1,10 @@
+scales: [0.5, 0.75, 1.0, 1.25, 1.5]
+rotations: [-6, -3, 0, 3, 6]
+confidence_threshold: 0.5
+nms_iou_threshold: 0.3
+max_image_side: 1600
+density_ratio_min: 0.4
+density_ratio_max: 2.5
+num_orientation_bins: 8
+chamfer_tau: 3.0
+max_candidates: 2000

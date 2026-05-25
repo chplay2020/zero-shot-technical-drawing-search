@@ -1,0 +1,11 @@
+numpy
+opencv-python-headless
+scipy
+scikit-image
+pillow
+gradio
+pydantic
+matplotlib
+tqdm
+pyyaml
+pytest
