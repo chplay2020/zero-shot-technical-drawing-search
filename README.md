@@ -1,0 +1,1 @@
+# zero-shot-technical-drawing-search
