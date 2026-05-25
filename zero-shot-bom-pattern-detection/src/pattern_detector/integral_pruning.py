@@ -8,12 +8,18 @@ import numpy as np
 Candidate = Tuple[int, int, int, int, float, float]
 
 
-def integral_image(edge_map: np.ndarray) -> np.ndarray:
-    """Compute integral image from binary edge map."""
-    return edge_map.cumsum(axis=0).cumsum(axis=1).astype(np.float32)
+def build_integral_image(edge: np.ndarray) -> np.ndarray:
+    """Build integral image from a binary edge map."""
+    if edge is None or edge.size == 0:
+        raise ValueError("Empty edge map provided to build_integral_image")
+    binary = (edge > 0).astype(np.float32)
+    return binary.cumsum(axis=0).cumsum(axis=1)
 
 
-def _sum_in_box(integral: np.ndarray, x: int, y: int, w: int, h: int) -> float:
+def window_sum(integral: np.ndarray, x: int, y: int, w: int, h: int) -> float:
+    """Compute sum of edges in a window using the integral image."""
+    if w <= 0 or h <= 0:
+        return 0.0
     x2 = x + w - 1
     y2 = y + h - 1
     total = integral[y2, x2]
@@ -23,6 +29,37 @@ def _sum_in_box(integral: np.ndarray, x: int, y: int, w: int, h: int) -> float:
     return float(total - left - up + corner)
 
 
+def density_score(window_edge_count: float, pattern_edge_count: float) -> float:
+    """Score density similarity between window and pattern in [0, 1]."""
+    if pattern_edge_count <= 0:
+        raise ValueError("pattern_edge_count must be positive")
+    ratio = window_edge_count / max(pattern_edge_count, 1e-6)
+    return float(np.exp(-abs(ratio - 1.0)))
+
+
+def is_density_valid(
+    window_edge_count: float,
+    pattern_edge_count: float,
+    min_ratio: float,
+    max_ratio: float,
+) -> bool:
+    """Check if window edge density is within ratio bounds."""
+    if pattern_edge_count <= 0:
+        return False
+    ratio = window_edge_count / max(pattern_edge_count, 1e-6)
+    return min_ratio <= ratio <= max_ratio
+
+
+def integral_image(edge_map: np.ndarray) -> np.ndarray:
+    """Backward-compatible wrapper for build_integral_image."""
+    return build_integral_image(edge_map)
+
+
+def _sum_in_box(integral: np.ndarray, x: int, y: int, w: int, h: int) -> float:
+    """Backward-compatible wrapper for window_sum."""
+    return window_sum(integral, x, y, w, h)
+
+
 def prune_by_density(
     candidates: Iterable[Candidate],
     integral: np.ndarray,
@@ -30,12 +67,14 @@ def prune_by_density(
     min_ratio: float,
     max_ratio: float,
 ) -> List[Candidate]:
-    """Filter candidates by edge density ratio to query."""
+    """Filter candidates by edge density ratio to query (legacy API)."""
     kept: List[Candidate] = []
+    if query_edge_density <= 0:
+        return kept
     for x, y, w, h, scale, rot in candidates:
         if w <= 0 or h <= 0:
             continue
-        edge_count = _sum_in_box(integral, x, y, w, h)
+        edge_count = window_sum(integral, x, y, w, h)
         density = edge_count / float(w * h)
         ratio = density / max(query_edge_density, 1e-6)
         if min_ratio <= ratio <= max_ratio:
