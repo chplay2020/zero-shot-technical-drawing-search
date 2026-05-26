@@ -7,6 +7,8 @@ import gradio as gr
 import numpy as np
 from PIL import Image
 
+import cv2
+
 import sys
 
 ROOT = Path(__file__).resolve().parent
@@ -30,11 +32,18 @@ def _run_inference(
         raise gr.Error("Both pattern and drawing images are required.")
 
     config = DetectorConfig.from_yaml(ROOT / "configs" / "default.yaml")
-    detector = PatternDetector(config)
+    detector = PatternDetector(config.to_dict())
 
-    result = detector.detect(_pil_to_bgr(pattern), _pil_to_bgr(drawing))
-    vis = Image.fromarray(np.array(result.visualization_rgb, dtype=np.uint8))
-    return vis, result.to_dict()
+    detections, vis_bgr, metadata = detector.detect(_pil_to_bgr(pattern), _pil_to_bgr(drawing))
+    vis_rgb = cv2.cvtColor(vis_bgr, cv2.COLOR_BGR2RGB)
+    vis = Image.fromarray(vis_rgb)
+    result = {
+        "detections": detections,
+        "metadata": metadata,
+        "image_width": int(drawing.width),
+        "image_height": int(drawing.height),
+    }
+    return vis, result
 
 
 def main() -> None:

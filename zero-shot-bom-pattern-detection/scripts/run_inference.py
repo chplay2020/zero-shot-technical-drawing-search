@@ -6,7 +6,6 @@ from pathlib import Path
 import json
 
 import cv2
-import numpy as np
 
 import sys
 
@@ -26,23 +25,26 @@ def main() -> None:
     args = parser.parse_args()
 
     config = DetectorConfig.from_yaml(ROOT / "configs" / "default.yaml")
-    detector = PatternDetector(config)
+    detector = PatternDetector(config.to_dict())
 
     pattern = read_image(args.pattern)
     drawing = read_image(args.drawing)
 
-    result = detector.detect(pattern, drawing)
+    detections, vis_bgr, metadata = detector.detect(pattern, drawing)
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_json = out_dir / "result.json"
     out_img = out_dir / "visualization.png"
 
-    out_json.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
-    vis = cv2.cvtColor(drawing, cv2.COLOR_BGR2RGB)
-    if result.visualization_rgb:
-        vis = np.array(result.visualization_rgb, dtype=np.uint8)
-    cv2.imwrite(str(out_img), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
+    result = {
+        "detections": detections,
+        "metadata": metadata,
+        "image_width": int(drawing.shape[1]),
+        "image_height": int(drawing.shape[0]),
+    }
+    out_json.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    cv2.imwrite(str(out_img), vis_bgr)
 
     print(f"Saved: {out_json}")
     print(f"Saved: {out_img}")

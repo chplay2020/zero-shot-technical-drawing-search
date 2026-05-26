@@ -24,7 +24,7 @@ def main() -> None:
     args = parser.parse_args()
 
     config = DetectorConfig.from_yaml(ROOT / "configs" / "default.yaml")
-    detector = PatternDetector(config)
+    detector = PatternDetector(config.to_dict())
 
     pattern = read_image(args.pattern)
     drawing = read_image(args.drawing)

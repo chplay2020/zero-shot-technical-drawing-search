@@ -1,158 +1,245 @@
 from __future__ import annotations
 
 import time
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import cv2
 import numpy as np
 
-from pattern_detector.candidate_generator import generate_candidates
-from pattern_detector.chamfer import chamfer_score, distance_transform, orientation_bins
-from pattern_detector.config import DetectorConfig
-from pattern_detector.integral_pruning import Candidate as RawCandidate
-from pattern_detector.integral_pruning import integral_image, prune_by_density
-from pattern_detector.nms import nms_indices
-from pattern_detector.preprocessing import detect_edges, ensure_color, resize_max_side, to_gray
-from pattern_detector.scoring import aspect_ratio_score, density_ratio_score, edge_iou, fuse_scores
-from pattern_detector.schemas import BoundingBox, Detection, InferenceResult
-from pattern_detector.visualization import draw_detections_legacy
+from pattern_detector.candidate_generator import CandidateBox, generate_candidates_by_density
+from pattern_detector.chamfer import (
+    build_directional_distance_transforms,
+    chamfer_distance_to_score,
+    compute_gradient_orientation,
+    directional_chamfer_distance,
+    extract_oriented_edge_points,
+    quantize_orientation,
+    transform_points,
+)
+from pattern_detector.nms import nms
+from pattern_detector.preprocessing import preprocess_drawing, preprocess_pattern
+from pattern_detector.scoring import (
+    aspect_ratio_score,
+    density_consistency_score,
+    edge_iou_score,
+    fuse_scores,
+)
+from pattern_detector.visualization import draw_detections
 
 
 class PatternDetector:
-    """Geometry-first zero-shot pattern detector."""
+    """Orchestrates the geometry-first zero-shot pattern detection pipeline."""
 
-    def __init__(self, config: DetectorConfig) -> None:
-        self.config = config
-
-    def detect(self, pattern_bgr: np.ndarray, drawing_bgr: np.ndarray) -> InferenceResult:
-        """Run pattern detection and return results."""
-        start = time.time()
-
-        pattern_bgr = ensure_color(pattern_bgr)
-        drawing_bgr = ensure_color(drawing_bgr)
-
-        drawing_resized, scale = resize_max_side(
-            drawing_bgr,
-            self.config.max_image_side,
-        )
-
-        pattern_gray = to_gray(pattern_bgr)
-        drawing_gray = to_gray(drawing_resized)
-
-        pattern_edges = detect_edges(pattern_gray)
-        drawing_edges = detect_edges(drawing_gray)
-
-        if pattern_edges.sum() == 0 or drawing_edges.sum() == 0:
-            raise ValueError("No edges found in pattern or drawing image.")
-
-        query_density = float(pattern_edges.mean())
-        integral = integral_image(drawing_edges)
-
-        candidates = generate_candidates(
-            drawing_edges.shape,
-            pattern_edges.shape,
-            self.config.scales,
-            self.config.rotations,
-            self.config.max_candidates,
-        )
-
-        raw_candidates: List[RawCandidate] = [
-            (c.x, c.y, c.w, c.h, c.scale, c.rotation) for c in candidates
-        ]
-
-        pruned = prune_by_density(
-            raw_candidates,
-            integral,
-            query_density,
-            self.config.density_ratio_min,
-            self.config.density_ratio_max,
-        )
-
-        dist_map = distance_transform(drawing_edges)
-        orient_map = orientation_bins(drawing_gray, self.config.num_orientation_bins)
-        query_orient = orientation_bins(pattern_gray, self.config.num_orientation_bins)
-
-        boxes: List[Tuple[int, int, int, int]] = []
-        scores: List[float] = []
-
-        pattern_h, pattern_w = pattern_edges.shape[:2]
-
-        for x, y, w, h, scale_c, rot_c in pruned:
-            box = (x, y, w, h)
-
-            chamfer = chamfer_score(
-                pattern_edges,
-                query_orient,
-                dist_map,
-                orient_map,
-                box,
-                self.config.num_orientation_bins,
+    def __init__(self, config: Any) -> None:
+        """Initialize detector with either a dict or a simple config object."""
+        if isinstance(config, dict):
+            self.config = config.copy()
+        elif hasattr(config, "__dict__"):
+            self.config = vars(config).copy()
+        else:
+            raise TypeError(
+                "Unsupported config type. Expected dict or config object with __dict__."
             )
 
-            target_edges = drawing_edges[y : y + h, x : x + w]
-            resized_query_edges = cv2.resize(
-                pattern_edges,
+    def detect(
+        self,
+        pattern_image: np.ndarray,
+        drawing_image: np.ndarray,
+    ) -> Tuple[List[Dict[str, Any]], np.ndarray, Dict[str, Any]]:
+        """Run full detection pipeline and return detections, visualization, metadata."""
+        start = time.time()
+
+        if pattern_image is None or pattern_image.size == 0:
+            raise ValueError("Empty pattern image provided to detect.")
+        if drawing_image is None or drawing_image.size == 0:
+            raise ValueError("Empty drawing image provided to detect.")
+
+        pattern_data = preprocess_pattern(pattern_image, self.config)
+        drawing_data = preprocess_drawing(drawing_image, self.config)
+
+        pattern_edge = pattern_data["cropped_edge"]
+        pattern_binary = pattern_data["cropped_binary"]
+
+        pattern_h, pattern_w = pattern_edge.shape[:2]
+        pattern_edge_count = float((pattern_edge > 0).sum())
+
+        drawing_edge = drawing_data["edge"]
+        drawing_gray = drawing_data["gray"]
+        drawing_resized = drawing_data["resized"]
+        scale_factor = float(drawing_data["scale_factor"])
+
+        candidates = generate_candidates_by_density(
+            drawing_edge,
+            pattern_edge,
+            self.config,
+        )
+
+        num_orientation_bins = int(self.config.get("num_orientation_bins", 8))
+
+        orientation = compute_gradient_orientation(drawing_gray)
+        orient_bins = quantize_orientation(
+            orientation,
+            num_bins=num_orientation_bins,
+        )
+
+        distance_transforms = build_directional_distance_transforms(
+            drawing_edge,
+            orient_bins,
+            num_bins=num_orientation_bins,
+        )
+
+        pattern_orientation = compute_gradient_orientation(
+            pattern_binary.astype(np.float32)
+        )
+        pattern_bins = quantize_orientation(
+            pattern_orientation,
+            num_bins=num_orientation_bins,
+        )
+
+        points, point_bins = extract_oriented_edge_points(
+            pattern_edge,
+            pattern_bins,
+        )
+
+        if points.size == 0:
+            raise ValueError("No pattern edge points available for matching.")
+
+        detections: List[Dict[str, Any]] = []
+
+        chamfer_tau = float(self.config.get("chamfer_tau", 4.0))
+        conf_threshold = float(self.config.get("confidence_threshold", 0.5))
+        weights = self.config.get("score_weights", None)
+
+        for cand in candidates:
+            if not isinstance(cand, CandidateBox):
+                continue
+
+            x, y, w, h = cand.x, cand.y, cand.w, cand.h
+
+            if w <= 1 or h <= 1:
+                continue
+            if x < 0 or y < 0:
+                continue
+            if x + w > drawing_edge.shape[1] or y + h > drawing_edge.shape[0]:
+                continue
+
+            center = (pattern_w / 2.0, pattern_h / 2.0)
+
+            transformed_points = transform_points(
+                points,
+                center,
+                cand.scale,
+                cand.rotation,
+            )
+
+            chamfer_dist = directional_chamfer_distance(
+                transformed_points,
+                point_bins,
+                distance_transforms,
+                x_offset=x,
+                y_offset=y,
+                soft_bins=True,
+            )
+
+            chamfer_score = chamfer_distance_to_score(
+                chamfer_dist,
+                tau=chamfer_tau,
+            )
+
+            candidate_edge = drawing_edge[y : y + h, x : x + w]
+
+            resized_pattern_edge = cv2.resize(
+                pattern_edge,
                 (w, h),
                 interpolation=cv2.INTER_NEAREST,
             )
 
-            iou_score = edge_iou(resized_query_edges, target_edges)
+            edge_iou = edge_iou_score(
+                resized_pattern_edge,
+                candidate_edge,
+            )
 
-            edge_count = float(target_edges.sum())
-            candidate_density = edge_count / float(w * h)
-            dens_score = density_ratio_score(query_density, candidate_density)
+            candidate_edge_count = float((candidate_edge > 0).sum())
 
-            ar_score = aspect_ratio_score(
+            density = density_consistency_score(
+                candidate_edge_count,
+                pattern_edge_count,
+            )
+
+            aspect = aspect_ratio_score(
                 candidate_w=w,
                 candidate_h=h,
                 pattern_w=pattern_w,
                 pattern_h=pattern_h,
             )
 
-            score = fuse_scores(
-                chamfer,
-                iou_score,
-                dens_score,
-                ar_score,
+            confidence = fuse_scores(
+                chamfer_score=chamfer_score,
+                edge_iou=edge_iou,
+                density=density,
+                aspect=aspect,
+                weights=weights,
             )
 
-            if score >= self.config.confidence_threshold:
-                boxes.append(box)
-                scores.append(score)
+            if confidence < conf_threshold:
+                continue
 
-        keep = nms_indices(boxes, scores, self.config.nms_iou_threshold)
-        boxes = [boxes[i] for i in keep]
-        scores = [scores[i] for i in keep]
-
-        if scale != 1.0:
-            inv = 1.0 / scale
-            boxes = [
-                (
-                    int(round(x * inv)),
-                    int(round(y * inv)),
-                    int(round(w * inv)),
-                    int(round(h * inv)),
-                )
-                for x, y, w, h in boxes
-            ]
-
-        vis = draw_detections_legacy(drawing_bgr, boxes, scores)
-        runtime_ms = (time.time() - start) * 1000.0
-
-        detections = [
-            Detection(
-                bbox=BoundingBox(x=b[0], y=b[1], w=b[2], h=b[3]),
-                score=s,
+            detections.append(
+                {
+                    "bbox": [int(x), int(y), int(w), int(h)],
+                    "confidence": float(confidence),
+                    "scale": float(cand.scale),
+                    "rotation": float(cand.rotation),
+                    "scores": {
+                        "chamfer": float(chamfer_score),
+                        "edge_iou": float(edge_iou),
+                        "density": float(density),
+                        "aspect_ratio": float(aspect),
+                    },
+                }
             )
-            for b, s in zip(boxes, scores)
-        ]
 
-        result = InferenceResult(
-            detections=detections,
-            image_width=int(drawing_bgr.shape[1]),
-            image_height=int(drawing_bgr.shape[0]),
-            runtime_ms=runtime_ms,
-            visualization_rgb=vis[:, :, ::-1].tolist(),
+        num_before_nms = len(detections)
+
+        detections = nms(
+            detections,
+            iou_threshold=float(self.config.get("nms_iou_threshold", 0.3)),
         )
 
-        return result
+        resized_h, resized_w = drawing_resized.shape[:2]
+        orig_h, orig_w = drawing_image.shape[:2]
+
+        inv_scale = 1.0 / max(scale_factor, 1e-6)
+
+        mapped: List[Dict[str, Any]] = []
+
+        for det in detections:
+            x, y, w, h = det["bbox"]
+
+            x = int(round(x * inv_scale))
+            y = int(round(y * inv_scale))
+            w = int(round(w * inv_scale))
+            h = int(round(h * inv_scale))
+
+            x = max(0, min(x, orig_w - 1))
+            y = max(0, min(y, orig_h - 1))
+            w = max(1, min(w, orig_w - x))
+            h = max(1, min(h, orig_h - y))
+
+            det["bbox"] = [x, y, w, h]
+            mapped.append(det)
+
+        vis = draw_detections(drawing_image, mapped)
+
+        runtime = time.time() - start
+
+        metadata = {
+            "runtime_seconds": float(runtime),
+            "num_candidates": int(len(candidates)),
+            "num_detections_before_nms": int(num_before_nms),
+            "num_detections_after_nms": int(len(mapped)),
+            "image_shape": [int(resized_h), int(resized_w)],
+            "scale_factor": float(scale_factor),
+        }
+
+        return mapped, vis, metadata

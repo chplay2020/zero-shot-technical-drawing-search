@@ -17,13 +17,15 @@ def test_detector_smoke():
         chamfer_tau=3.0,
         max_candidates=50,
     )
-    detector = PatternDetector(config)
+    detector = PatternDetector(config.to_dict())
 
     pattern = np.zeros((32, 32, 3), dtype=np.uint8)
     pattern[8:24, 16] = 255
     drawing = np.zeros((64, 64, 3), dtype=np.uint8)
     drawing[16:48, 32] = 255
 
-    result = detector.detect(pattern, drawing)
-    assert result.image_width == 64
-    assert result.image_height == 64
+    detections, vis, metadata = detector.detect(pattern, drawing)
+    assert isinstance(detections, list)
+    assert vis.shape[0] == 64
+    assert vis.shape[1] == 64
+    assert metadata["image_shape"][0] > 0
