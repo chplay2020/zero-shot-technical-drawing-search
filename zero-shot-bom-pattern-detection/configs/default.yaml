@@ -1,10 +1,41 @@
-scales: [0.5, 0.75, 1.0, 1.25, 1.5]
-rotations: [-6, -3, 0, 3, 6]
-confidence_threshold: 0.5
-nms_iou_threshold: 0.3
-max_image_side: 1600
+# scales: [0.5, 0.75, 1.0, 1.25, 1.5]
+# rotations: [-6, -3, 0, 3, 6]
+# confidence_threshold: 0.55
+# nms_iou_threshold: 0.3
+# max_image_side: 1600
+# density_ratio_min: 0.4
+# density_ratio_max: 2.5
+# num_orientation_bins: 8
+# chamfer_tau: 3.0
+# max_candidates: 2000
+# min_chamfer_score: 0.35
+# min_edge_iou: 0.03
+# max_edge_excess_ratio: 3.5
+
+
+scales: [0.75, 0.9, 1.0, 1.1, 1.25]
+rotations: [0.0]
+
+max_image_side: 1800
+max_candidates: 800
+
 density_ratio_min: 0.4
 density_ratio_max: 2.5
+
 num_orientation_bins: 8
-chamfer_tau: 3.0
-max_candidates: 2000
+chamfer_tau: 4.0
+
+confidence_threshold: 0.55
+nms_iou_threshold: 0.3
+
+min_chamfer_score: 0.35
+min_edge_iou: 0.03
+max_edge_excess_ratio: 3.5
+
+padding_ratio: 0.08
+
+score_weights:
+  chamfer: 0.55
+  edge_iou: 0.20
+  density: 0.15
+  aspect: 0.10

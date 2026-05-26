@@ -108,6 +108,9 @@ class PatternDetector:
 
         chamfer_tau = float(self.config.get("chamfer_tau", 4.0))
         conf_threshold = float(self.config.get("confidence_threshold", 0.5))
+        min_chamfer_score = float(self.config.get("min_chamfer_score", 0.35))
+        min_edge_iou = float(self.config.get("min_edge_iou", 0.03))
+        max_edge_excess_ratio = float(self.config.get("max_edge_excess_ratio", 3.5))
         weights = self.config.get("score_weights", None)
 
         for cand in candidates:
@@ -146,6 +149,9 @@ class PatternDetector:
                 tau=chamfer_tau,
             )
 
+            if chamfer_score < min_chamfer_score:
+                continue
+
             candidate_edge = drawing_edge[y : y + h, x : x + w]
 
             resized_pattern_edge = cv2.resize(
@@ -159,7 +165,18 @@ class PatternDetector:
                 candidate_edge,
             )
 
+            if edge_iou < min_edge_iou:
+                continue
+
             candidate_edge_count = float((candidate_edge > 0).sum())
+
+            edge_excess_ratio = candidate_edge_count / max(pattern_edge_count, 1e-6)
+            if edge_excess_ratio > max_edge_excess_ratio:
+                continue
+
+            clutter_score = float(
+                np.exp(-abs(np.log(edge_excess_ratio + 1e-6)))
+            )
 
             density = density_consistency_score(
                 candidate_edge_count,
@@ -181,6 +198,8 @@ class PatternDetector:
                 weights=weights,
             )
 
+            confidence = float(np.clip(confidence * (0.7 + 0.3 * clutter_score), 0.0, 1.0))
+
             if confidence < conf_threshold:
                 continue
 
@@ -195,6 +214,8 @@ class PatternDetector:
                         "edge_iou": float(edge_iou),
                         "density": float(density),
                         "aspect_ratio": float(aspect),
+                        "clutter": float(clutter_score),
+                        "edge_excess_ratio": float(edge_excess_ratio),
                     },
                 }
             )
