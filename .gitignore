@@ -36,3 +36,17 @@ Thumbs.db
 *.onnx
 *.ckpt
 *.safetensors
+examples/outputs/
+examples/drawings/*.png
+examples/drawings/*.jpg
+examples/drawings/*.jpeg
+examples/patterns/*.png
+examples/patterns/*.jpg
+examples/patterns/*.jpeg
+
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+*.pyc
+tmp/
