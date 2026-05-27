@@ -1,41 +1,104 @@
-# scales: [0.5, 0.75, 1.0, 1.25, 1.5]
-# rotations: [-6, -3, 0, 3, 6]
-# confidence_threshold: 0.55
-# nms_iou_threshold: 0.3
-# max_image_side: 1600
-# density_ratio_min: 0.4
-# density_ratio_max: 2.5
-# num_orientation_bins: 8
-# chamfer_tau: 3.0
-# max_candidates: 2000
-# min_chamfer_score: 0.35
-# min_edge_iou: 0.03
-# max_edge_excess_ratio: 3.5
+# CPU-budgeted Coarse-to-Fine Classical CV Pipeline
+# Balanced Edge Template Matching + Shape Verification + Layout Suppression.
 
+mode: accurate
 
-scales: [0.75, 0.9, 1.0, 1.1, 1.25]
-rotations: [0.0]
+# Search space
+scales: [0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.4]
+rotations: [0.0, 90.0, 180.0, 270.0, -5.0, 5.0]
 
+# Runtime budget
 max_image_side: 1800
-max_candidates: 800
+max_candidates: 2000
+candidate_pool_size: 3200
+max_verification_candidates: 2600
+time_budget_seconds: 55.0
 
-density_ratio_min: 0.4
-density_ratio_max: 2.5
+# Candidate generation: ensemble search
+candidate_merge_iou: 0.82
+enable_candidate_ensemble: true
 
+template_match_threshold: 0.12
+template_top_k_per_variant: 80
+background_penalty_tau: 0.18
+background_penalty_weight: 0.25
+
+# Plain template source for embedded/line-connected symbols
+plain_template_threshold: 0.08
+plain_template_top_k_per_variant: 120
+plain_template_max_candidates: 1200
+
+# Density fallback source
+density_fallback_max_candidates: 600
+density_ratio_min: 0.25
+density_ratio_max: 4.0
+min_window_size: 4
+
+# Directional chamfer
 num_orientation_bins: 8
-chamfer_tau: 4.0
+chamfer_tau: 5.0
 
-confidence_threshold: 0.55
-nms_iou_threshold: 0.3
+# Candidate verification
+min_chamfer_score: 0.06
+min_edge_iou: 0.0
+min_edge_f1: 0.02
+edge_tolerance: 2
+mask_dilation: 2
+min_masked_precision: 0.24
+max_outside_edge_ratio: 5.0
+outside_edge_tau: 2.5
+shape_cleanliness_weight: 0.25
 
-min_chamfer_score: 0.35
-min_edge_iou: 0.03
-max_edge_excess_ratio: 3.5
+# Artifact/table/text suppression
+artifact_block_size: 64
+artifact_stride: 32
+artifact_threshold: 0.35
+artifact_dilate_kernel: 25
+artifact_penalty_floor: 0.15
+artifact_penalty_weight: 0.40
+use_artifact_hard_gate: false
+min_artifact_penalty: 0.20
 
+# Layout / border-grid / title-block suppression
+layout_block_size: 96
+layout_stride: 48
+layout_artifact_threshold: 0.34
+layout_border_band_ratio: 0.055
+layout_dilate_kernel: 31
+layout_penalty_floor: 0.12
+layout_penalty_weight: 0.48
+use_layout_hard_gate: false
+min_layout_penalty: 0.20
+
+# Query topology / connection-aware scoring
+topology_band_ratio: 0.12
+connector_width_ratio: 0.22
+connector_touch_threshold: 0.015
+min_query_closed_score: 0.45
+min_closed_compatibility: 0.35
+
+# Dynamic filtering and adaptive recall
+# Strict threshold is tried first. If too few candidates survive, adaptive recall
+# selects a spatially diverse top set from the already verified pool.
+dynamic_min_threshold: 0.46
+dynamic_threshold_ratio: 0.88
+pre_nms_top_k: 24
+min_final_candidates_before_nms: 6
+enable_adaptive_recall: true
+adaptive_recall_ratio: 0.74
+adaptive_recall_min_score: 0.36
+enable_empty_fallback: true
+fallback_min_score: 0.20
+fallback_top_k: 8
+nms_iou_threshold: 0.22
+
+# Legacy compatibility
+confidence_threshold: 0.0
+max_edge_excess_ratio: 8.0
+
+# Pattern preprocessing
 padding_ratio: 0.08
 
-score_weights:
-  chamfer: 0.55
-  edge_iou: 0.20
-  density: 0.15
-  aspect: 0.10
+# Bounding box refinement
+enable_bbox_refinement: true
+bbox_expand_ratio: 0.08

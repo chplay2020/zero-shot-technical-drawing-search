@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import gradio as gr
 import numpy as np
@@ -24,15 +24,44 @@ def _pil_to_bgr(image: Image.Image) -> np.ndarray:
     return arr[:, :, ::-1].copy()
 
 
+def _apply_mode_overrides(config: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    if mode == "Accurate":
+        return {
+            **config,
+            "scales": [0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.4],
+            "rotations": [0.0, -5.0, 5.0],
+            "max_candidates": 3000,
+            "template_top_k_per_variant": 400,
+            "max_image_side": 2200,
+            "mode": "accurate",
+        }
+    return {
+        **config,
+        "scales": [0.8, 0.9, 1.0, 1.1, 1.2],
+        "rotations": [0.0],
+        "max_candidates": 500,
+        "template_top_k_per_variant": 80,
+        "max_image_side": 1600,
+        "mode": "fast",
+    }
+
+
 def _run_inference(
     pattern: Image.Image | None,
     drawing: Image.Image | None,
-) -> tuple[Image.Image, Dict[str, Any]]:
+    dynamic_threshold_ratio: float,
+    dynamic_min_threshold: float,
+    mode: str,
+) -> Tuple[Image.Image, Dict[str, Any], Dict[str, Any]]:
     if pattern is None or drawing is None:
         raise gr.Error("Both pattern and drawing images are required.")
 
-    config = DetectorConfig.from_yaml(ROOT / "configs" / "default.yaml")
-    detector = PatternDetector(config.to_dict())
+    config = DetectorConfig.from_yaml(ROOT / "configs" / "default.yaml").to_dict()
+    config = _apply_mode_overrides(config, mode)
+    config["dynamic_threshold_ratio"] = float(dynamic_threshold_ratio)
+    config["dynamic_min_threshold"] = float(dynamic_min_threshold)
+
+    detector = PatternDetector(config)
 
     detections, vis_bgr, metadata = detector.detect(_pil_to_bgr(pattern), _pil_to_bgr(drawing))
     vis_rgb = cv2.cvtColor(vis_bgr, cv2.COLOR_BGR2RGB)
@@ -43,7 +72,7 @@ def _run_inference(
         "image_width": int(drawing.width),
         "image_height": int(drawing.height),
     }
-    return vis, result
+    return vis, result, metadata
 
 
 def main() -> None:
@@ -52,13 +81,33 @@ def main() -> None:
         inputs=[
             gr.Image(type="pil", label="Pattern Image"),
             gr.Image(type="pil", label="Drawing Image"),
+            gr.Slider(
+                minimum=0.5,
+                maximum=0.9,
+                step=0.01,
+                value=0.72,
+                label="Dynamic Threshold Ratio",
+            ),
+            gr.Slider(
+                minimum=0.1,
+                maximum=0.6,
+                step=0.01,
+                value=0.32,
+                label="Dynamic Min Threshold",
+            ),
+            gr.Dropdown(
+                choices=["Fast", "Accurate"],
+                value="Accurate",
+                label="Search Mode",
+            ),
         ],
         outputs=[
             gr.Image(type="pil", label="Detections"),
             gr.JSON(label="Result JSON"),
+            gr.JSON(label="Metadata"),
         ],
         title="Zero-shot BOM Pattern Detection",
-        description="Geometry-first pattern matching for technical drawings.",
+        description="Template matching-first hybrid pipeline for technical drawings.",
     )
     demo.launch()
 
