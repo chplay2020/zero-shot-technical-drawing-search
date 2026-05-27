@@ -6,7 +6,7 @@ Báo cáo cấu phần và hướng dẫn sử dụng mã nguồn cho hệ thố
 
 ## 📌 4.1. GitHub Repository
 
-* **Repository URL:** `<YOUR_GITHUB_REPO_URL>`
+* **Repository URL:** `https://github.com/chplay2020/zero-shot-technical-drawing-search`
 * **Mục đích:** Chứa toàn bộ mã nguồn xử lý lõi của hệ thống **Zero-shot BOM Pattern Detection**. Hệ thống được thiết kế để tìm kiếm các vùng khớp với ảnh mẫu (Pattern) trong một bản vẽ kỹ thuật lớn mà không cần training, fine-tuning hoặc sử dụng trọng số của bất kỳ mô hình học máy pretrained nào.
 
 ### 📊 Yêu cầu & Trạng thái dự án
