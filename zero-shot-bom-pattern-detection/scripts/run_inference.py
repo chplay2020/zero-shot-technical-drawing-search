@@ -4,8 +4,10 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Tuple
 
 import cv2
+import numpy as np
 
 import sys
 
@@ -14,7 +16,28 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from pattern_detector.config import DetectorConfig
 from pattern_detector.detector import PatternDetector
-from pattern_detector.preprocessing import read_image
+
+
+def _load_image(path: Path) -> Tuple[Path, np.ndarray]:
+    """Load an image from disk using OpenCV.
+
+    Args:
+        path: Image path.
+
+    Returns:
+        Tuple of (resolved path, image array).
+
+    Raises:
+        FileNotFoundError: If the path does not exist.
+        ValueError: If the image cannot be read.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Image not found: {path}")
+    resolved = path.resolve()
+    image = cv2.imread(str(resolved), cv2.IMREAD_COLOR)
+    if image is None or image.size == 0:
+        raise ValueError(f"Failed to read image: {resolved}")
+    return resolved, image
 
 
 def main() -> None:
@@ -44,10 +67,6 @@ def main() -> None:
     pattern_path = Path(args.pattern)
     drawing_path = Path(args.drawing)
     config_path = Path(args.config)
-    if not pattern_path.exists():
-        raise FileNotFoundError(f"Pattern image not found: {pattern_path}")
-    if not drawing_path.exists():
-        raise FileNotFoundError(f"Drawing image not found: {drawing_path}")
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
@@ -59,8 +78,8 @@ def main() -> None:
 
     detector = PatternDetector(config_dict)
 
-    pattern = read_image(str(pattern_path))
-    drawing = read_image(str(drawing_path))
+    _, pattern = _load_image(pattern_path)
+    _, drawing = _load_image(drawing_path)
 
     start = time.time()
     detections, vis_bgr, metadata = detector.detect(pattern, drawing)

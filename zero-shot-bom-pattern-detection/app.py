@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 import gradio as gr
 import numpy as np
@@ -24,46 +24,48 @@ def _pil_to_bgr(image: Image.Image) -> np.ndarray:
     return arr[:, :, ::-1].copy()
 
 
-def _apply_mode_overrides(config: Dict[str, Any], mode: str) -> Dict[str, Any]:
-    if mode == "Accurate":
-        return {
-            **config,
-            "scales": [0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.4],
-            "rotations": [0.0, -5.0, 5.0],
-            "max_candidates": 3000,
-            "template_top_k_per_variant": 400,
-            "max_image_side": 2200,
-            "mode": "accurate",
-        }
-    return {
-        **config,
-        "scales": [0.8, 0.9, 1.0, 1.1, 1.2],
-        "rotations": [0.0],
-        "max_candidates": 500,
-        "template_top_k_per_variant": 80,
-        "max_image_side": 1600,
-        "mode": "fast",
-    }
+def _build_table(detections: List[Dict[str, Any]]) -> List[List[float]]:
+    rows: List[List[float]] = []
+    for det in detections:
+        bbox = det.get("bbox", [0, 0, 0, 0])
+        scores = det.get("scores", {})
+        rows.append(
+            [
+                float(bbox[0]),
+                float(bbox[1]),
+                float(bbox[2]),
+                float(bbox[3]),
+                float(det.get("confidence", 0.0)),
+                float(det.get("scale", 1.0)),
+                float(det.get("rotation", 0.0)),
+            ]
+        )
+    return rows
 
 
 def _run_inference(
     pattern: Image.Image | None,
     drawing: Image.Image | None,
-    dynamic_threshold_ratio: float,
-    dynamic_min_threshold: float,
-    mode: str,
-) -> Tuple[Image.Image, Dict[str, Any], Dict[str, Any]]:
+    confidence_threshold: float,
+    advanced_search: bool,
+    rotation_search: bool,
+) -> Tuple[Image.Image | None, List[List[float]], Dict[str, Any], str]:
     if pattern is None or drawing is None:
-        raise gr.Error("Both pattern and drawing images are required.")
+        raise gr.Error("Please upload both the pattern image and drawing image.")
 
     config = DetectorConfig.from_yaml(ROOT / "configs" / "default.yaml").to_dict()
-    config = _apply_mode_overrides(config, mode)
-    config["dynamic_threshold_ratio"] = float(dynamic_threshold_ratio)
-    config["dynamic_min_threshold"] = float(dynamic_min_threshold)
+    config["confidence_threshold"] = float(confidence_threshold)
+    config["advanced_search"] = bool(advanced_search)
+    if not rotation_search:
+        config["rotations"] = [0.0]
 
     detector = PatternDetector(config)
 
-    detections, vis_bgr, metadata = detector.detect(_pil_to_bgr(pattern), _pil_to_bgr(drawing))
+    try:
+        detections, vis_bgr, metadata = detector.detect(_pil_to_bgr(pattern), _pil_to_bgr(drawing))
+    except Exception as exc:
+        raise gr.Error(f"Inference failed: {exc}") from exc
+
     vis_rgb = cv2.cvtColor(vis_bgr, cv2.COLOR_BGR2RGB)
     vis = Image.fromarray(vis_rgb)
     result = {
@@ -72,43 +74,61 @@ def _run_inference(
         "image_width": int(drawing.width),
         "image_height": int(drawing.height),
     }
-    return vis, result, metadata
+    table = _build_table(detections)
+    runtime = float(metadata.get("runtime_seconds", 0.0))
+    meta_text = (
+        f"Runtime: {runtime:.3f}s | "
+        f"Detections: {len(detections)} | "
+        f"Candidates: {metadata.get('num_candidates', 0)}"
+    )
+    return vis, table, result, meta_text
 
 
 def main() -> None:
-    demo = gr.Interface(
-        fn=_run_inference,
-        inputs=[
-            gr.Image(type="pil", label="Pattern Image"),
-            gr.Image(type="pil", label="Drawing Image"),
-            gr.Slider(
-                minimum=0.5,
-                maximum=0.9,
+    with gr.Blocks(title="Zero-shot BOM Pattern Detection") as demo:
+        gr.Markdown(
+            "# Zero-shot BOM Pattern Detection\n"
+            "Upload a pattern image and a drawing image to detect matching symbols."
+        )
+
+        with gr.Row():
+            pattern_input = gr.Image(type="pil", label="Pattern Image")
+            drawing_input = gr.Image(type="pil", label="Drawing Image")
+
+        with gr.Row():
+            confidence_slider = gr.Slider(
+                minimum=0.0,
+                maximum=1.0,
                 step=0.01,
-                value=0.72,
-                label="Dynamic Threshold Ratio",
-            ),
-            gr.Slider(
-                minimum=0.1,
-                maximum=0.6,
-                step=0.01,
-                value=0.32,
-                label="Dynamic Min Threshold",
-            ),
-            gr.Dropdown(
-                choices=["Fast", "Accurate"],
-                value="Accurate",
-                label="Search Mode",
-            ),
-        ],
-        outputs=[
-            gr.Image(type="pil", label="Detections"),
-            gr.JSON(label="Result JSON"),
-            gr.JSON(label="Metadata"),
-        ],
-        title="Zero-shot BOM Pattern Detection",
-        description="Template matching-first hybrid pipeline for technical drawings.",
-    )
+                value=0.5,
+                label="Confidence Threshold",
+            )
+            advanced_checkbox = gr.Checkbox(label="Enable Advanced Search", value=False)
+            rotation_checkbox = gr.Checkbox(label="Enable Rotation Search", value=True)
+
+        run_button = gr.Button("Run Detection")
+
+        output_image = gr.Image(type="pil", label="Detections")
+        output_table = gr.Dataframe(
+            headers=["x", "y", "w", "h", "confidence", "scale", "rotation"],
+            datatype=["number"] * 7,
+            label="Detections Table",
+        )
+        output_json = gr.JSON(label="Result JSON")
+        output_text = gr.Textbox(label="Runtime / Metadata", interactive=False)
+
+        run_button.click(
+            fn=_run_inference,
+            inputs=[
+                pattern_input,
+                drawing_input,
+                confidence_slider,
+                advanced_checkbox,
+                rotation_checkbox,
+            ],
+            outputs=[output_image, output_table, output_json, output_text],
+        )
+
     demo.launch()
 
 

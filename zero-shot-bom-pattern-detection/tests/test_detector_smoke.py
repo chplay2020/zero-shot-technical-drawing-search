@@ -40,12 +40,13 @@ def test_detector_smoke():
     pattern[4:20, 23] = 255
     pattern[4, 4:24] = 255
     pattern[19, 4:24] = 255
-    drawing = np.zeros((64, 64, 3), dtype=np.uint8)
-    drawing[20:44, 24:52] = pattern
+    drawing = np.zeros((80, 80, 3), dtype=np.uint8)
+    drawing[16:40, 12:40] = pattern
+    drawing[40:64, 40:68] = pattern
 
     detections, vis, metadata = detector.detect(pattern, drawing)
     assert isinstance(detections, list)
     assert detections, "Expected at least one detection"
-    assert vis.shape[0] == 64
-    assert vis.shape[1] == 64
+    assert vis.shape[0] == 80
+    assert vis.shape[1] == 80
     assert metadata["image_shape"][0] > 0
