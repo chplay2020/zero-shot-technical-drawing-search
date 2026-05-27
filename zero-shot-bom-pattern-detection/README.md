@@ -81,7 +81,7 @@ zero-shot-bom-pattern-detection/
 
 ```bash
 # Clone dự án về máy địa phương
-git clone <YOUR_GITHUB_REPO_URL>
+git clone https://github.com/chplay2020/zero-shot-technical-drawing-search
 cd zero-shot-bom-pattern-detection
 
 # Khởi tạo Virtual Environment
